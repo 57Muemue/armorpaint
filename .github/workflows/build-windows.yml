@@ -575,3 +575,55 @@ jobs:
           else {
             Write-Host "CJK font not found; skipping."
           }
+
+      # ==========================
+
+      - name: Inspect ArmorPaint runtime files
+        shell: powershell
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $buildRoot = Join-Path $env:GITHUB_WORKSPACE "paint\build"
+
+          Write-Host "========================================"
+          Write-Host "Searching ArmorPaint runtime files"
+          Write-Host "========================================"
+
+          Write-Host ""
+          Write-Host "Searching for font_cjk.ttc..."
+
+          $fonts = Get-ChildItem `
+            -Path $env:GITHUB_WORKSPACE `
+            -Filter "font_cjk.ttc" `
+            -Recurse `
+            -File `
+            -ErrorAction SilentlyContinue
+
+          if ($fonts) {
+            Write-Host ""
+            Write-Host "Found CJK font:"
+            $fonts | Select-Object FullName, Length
+          }
+          else {
+            Write-Host "font_cjk.ttc was not found in workspace."
+          }
+
+          Write-Host ""
+          Write-Host "Searching for ArmorPaint runtime directories..."
+
+          Get-ChildItem `
+            -Path $buildRoot `
+            -Recurse `
+            -Directory `
+            -ErrorAction SilentlyContinue |
+            Select-Object FullName
+
+          Write-Host ""
+          Write-Host "All files under build:"
+
+          Get-ChildItem `
+            -Path $buildRoot `
+            -Recurse `
+            -File `
+            -ErrorAction SilentlyContinue |
+            Select-Object FullName, Length
