@@ -4,23 +4,29 @@ on:
   workflow_dispatch:
     inputs:
       configuration:
-        description: Build configuration
+        description: "Build configuration"
         required: true
-        default: Release
+        default: "Release"
         type: choice
         options:
           - Release
           - Debug
 
+      clean_build:
+        description: "Delete previous build directory before compiling"
+        required: true
+        default: true
+        type: boolean
+
 jobs:
   build:
-    name: Build ArmorPaint Windows x64
+    name: ArmorPaint Windows x64 (${{ inputs.configuration }})
     runs-on: windows-2025
 
     steps:
 
       # ==========================================================
-      # 1. Checkout
+      # 1. Checkout ArmorPaint + submodules
       # ==========================================================
 
       - name: Checkout ArmorPaint
@@ -31,7 +37,34 @@ jobs:
 
 
       # ==========================================================
-      # 2. Basic environment
+      # 2. Show repository information
+      # ==========================================================
+
+      - name: Show source revision
+        shell: powershell
+        run: |
+          Write-Host "ArmorPaint commit:"
+          git rev-parse HEAD
+
+          Write-Host ""
+          Write-Host "Git branch:"
+          git branch --show-current
+
+          Write-Host ""
+          Write-Host "Repository:"
+          Get-ChildItem
+
+
+      # ==========================================================
+      # 3. Install / verify required tools
+      #
+      # ArmorPaint's current build requires:
+      # - Visual Studio / MSBuild
+      # - Clang
+      # - Node.js
+      # - Git
+      #
+      # Git is already provided by GitHub Actions.
       # ==========================================================
 
       - name: Setup MSVC
@@ -46,226 +79,161 @@ jobs:
           node-version: 22
 
 
-      # ==========================================================
-      # 3. Verify environment
-      # ==========================================================
-
-      - name: Verify tools
+      - name: Verify build tools
         shell: powershell
         run: |
-          $ErrorActionPreference = "Stop"
-
-          Write-Host "========================================"
-          Write-Host "Environment"
-          Write-Host "========================================"
-
-          Write-Host ""
-          Write-Host "Git:"
-          git --version
-
-          Write-Host ""
-          Write-Host "Node:"
+          Write-Host "=== Node ==="
           node --version
 
           Write-Host ""
-          Write-Host "NPM:"
-          npm --version
+          Write-Host "=== Git ==="
+          git --version
 
           Write-Host ""
-          Write-Host "MSBuild:"
+          Write-Host "=== MSBuild ==="
           where.exe msbuild
 
           Write-Host ""
-          Write-Host "Clang:"
+          Write-Host "=== Clang ==="
           where.exe clang-cl
 
-          Write-Host ""
-          Write-Host "Python:"
-          python --version
-
-          Write-Host ""
-          Write-Host "Working directory:"
-          Get-Location
-
-          Write-Host ""
-          Write-Host "Repository:"
-          Get-ChildItem
-
 
       # ==========================================================
-      # 4. Check ArmorPaint build tools
+      # 4. Optional clean build
       # ==========================================================
 
-      - name: Verify ArmorPaint build system
+      - name: Clean previous build
+        if: ${{ inputs.clean_build }}
         shell: powershell
         run: |
-          $ErrorActionPreference = "Stop"
+          $build = Join-Path $env:GITHUB_WORKSPACE "paint\build"
 
-          $base = Join-Path `
-            $env:GITHUB_WORKSPACE `
-            "base"
+          if (Test-Path $build) {
+            Write-Host "Removing:"
+            Write-Host $build
 
-          $paint = Join-Path `
-            $env:GITHUB_WORKSPACE `
-            "paint"
-
-          Write-Host "BASE:"
-          Write-Host $base
-
-          Write-Host ""
-          Write-Host "PAINT:"
-          Write-Host $paint
-
-          if (-not (Test-Path $base)) {
-            throw "base directory does not exist."
+            Remove-Item `
+              -Path $build `
+              -Recurse `
+              -Force
           }
-
-          if (-not (Test-Path $paint)) {
-            throw "paint directory does not exist."
+          else {
+            Write-Host "No previous build directory."
           }
-
-          Write-Host ""
-          Write-Host "base/tools:"
-          Get-ChildItem "$base\tools" -Recurse -File |
-            Select-Object FullName
-
-          Write-Host ""
-          Write-Host "Checking amake..."
-
-          $amake = Get-ChildItem `
-            "$base\tools\bin" `
-            -Recurse `
-            -Filter "amake*" `
-            -File `
-            -ErrorAction SilentlyContinue |
-            Select-Object -First 10
-
-          if (-not $amake) {
-            throw "amake executable was not found under base/tools/bin."
-          }
-
-          $amake |
-            Select-Object FullName, Length
 
 
       # ==========================================================
-      # 5. Run ArmorPaint official generator
+      # 5. Generate ArmorPaint Visual Studio project
       #
-      # Current official command:
+      # Official current build command:
       #
-      #   cd paint
+      #   cd armorpaint/paint
       #   ..\base\make
       #
-      # IMPORTANT:
-      # Do NOT hide the output.
+      # This generates:
+      #
+      #   paint/build/ArmorPaint.sln
       # ==========================================================
 
-      - name: Generate ArmorPaint project
+      - name: Generate Visual Studio project
         shell: cmd
         working-directory: paint
         run: |
-          echo ========================================
-          echo Running ArmorPaint build generator
-          echo ========================================
-
-          echo.
-          echo Current directory:
-          cd
-
-          echo.
-          echo Running:
-          echo ..\base\make
-
-          echo.
-
-          call ..\base\make
-
-          if errorlevel 1 (
-            echo.
-            echo ========================================
-            echo ARMORPAINT MAKE FAILED
-            echo ========================================
-            exit /b 1
-          )
-
-          echo.
-          echo ========================================
-          echo ARMORPAINT MAKE FINISHED
-          echo ========================================
+          ..\base\make
 
 
       # ==========================================================
-      # 6. Locate generated Visual Studio solution
-      #
-      # Do not assume only one exact path.
+      # 6. Verify generated solution
       # ==========================================================
 
-      - name: Locate generated project
+      - name: Find generated Visual Studio solution
         shell: powershell
         run: |
           $ErrorActionPreference = "Stop"
-
-          $root = $env:GITHUB_WORKSPACE
-
+      
           Write-Host "========================================"
-          Write-Host "Searching for ArmorPaint.sln"
+          Write-Host "Searching for generated Visual Studio files"
           Write-Host "========================================"
-
+      
+          Write-Host ""
+          Write-Host "GITHUB_WORKSPACE:"
+          Write-Host $env:GITHUB_WORKSPACE
+      
+          Write-Host ""
+          Write-Host "Searching for *.sln..."
+      
           $solutions = Get-ChildItem `
-            -Path $root `
-            -Filter "ArmorPaint.sln" `
+            -Path $env:GITHUB_WORKSPACE `
+            -Filter "*.sln" `
             -Recurse `
             -File `
             -ErrorAction SilentlyContinue
-
-          if (-not $solutions) {
-
+      
+          if ($solutions.Count -eq 0) {
+      
             Write-Host ""
-            Write-Host "ArmorPaint.sln was NOT found."
-
+            Write-Host "No .sln file found."
+      
             Write-Host ""
-            Write-Host "========================================"
-            Write-Host "paint directory"
-            Write-Host "========================================"
-
+            Write-Host "Searching for generated project files..."
+      
             Get-ChildItem `
-              "$root\paint" `
+              -Path $env:GITHUB_WORKSPACE `
               -Recurse `
               -File `
               -ErrorAction SilentlyContinue |
+              Where-Object {
+                $_.Extension -in @(
+                  ".sln",
+                  ".vcxproj",
+                  ".vcxproj.filters",
+                  ".props",
+                  ".targets"
+                )
+              } |
               Select-Object FullName, Length
-
+      
             Write-Host ""
-            Write-Host "========================================"
-            Write-Host "base/tools/bin"
-            Write-Host "========================================"
-
+            Write-Host "Directory tree around paint:"
+      
             Get-ChildItem `
-              "$root\base\tools\bin" `
+              "$env:GITHUB_WORKSPACE\paint" `
               -Recurse `
-              -File `
               -ErrorAction SilentlyContinue |
-              Select-Object FullName, Length
-
-            throw "ArmorPaint.sln was not generated."
+              Select-Object FullName
+      
+            throw "No Visual Studio solution was found."
           }
-
+      
           Write-Host ""
           Write-Host "Found solution(s):"
-
+      
           $solutions |
             Select-Object FullName, Length
-
-          $solution = $solutions | Select-Object -First 1
-
+      
+          # Prefer ArmorPaint.sln
+          $solution = $solutions |
+            Where-Object { $_.Name -eq "ArmorPaint.sln" } |
+            Select-Object -First 1
+      
+          # Fallback: first solution
+          if (-not $solution) {
+            $solution = $solutions | Select-Object -First 1
+          }
+      
+          Write-Host ""
+          Write-Host "Selected solution:"
+          Write-Host $solution.FullName
+      
           "ARMORPAINT_SOLUTION=$($solution.FullName)" |
             Out-File `
               -FilePath $env:GITHUB_ENV `
               -Append
 
-
       # ==========================================================
-      # 7. Build
+      # 7. Build ArmorPaint
+      #
+      # The generated solution is built directly with MSBuild.
       # ==========================================================
 
       - name: Build ArmorPaint
@@ -274,16 +242,16 @@ jobs:
           echo ========================================
           echo Building ArmorPaint
           echo ========================================
-
+      
           echo Solution:
           echo %ARMORPAINT_SOLUTION%
-
+      
           msbuild "%ARMORPAINT_SOLUTION%" ^
             /m ^
-            /p:Configuration=${{ inputs.configuration }} ^
+            /p:Configuration=Release ^
             /p:Platform=x64 ^
             /verbosity:minimal
-
+      
           if errorlevel 1 (
             echo.
             echo ========================================
@@ -294,51 +262,30 @@ jobs:
 
 
       # ==========================================================
-      # 8. Locate executable
+      # 8. Locate the compiled executable
       # ==========================================================
 
-      - name: Locate ArmorPaint executable
+      - name: Locate ArmorPaint.exe
         shell: powershell
         run: |
-          $ErrorActionPreference = "Stop"
-
-          $root = $env:GITHUB_WORKSPACE
-
           Write-Host "Searching for ArmorPaint.exe..."
 
-          $executables = Get-ChildItem `
-            -Path $root `
+          $exe = Get-ChildItem `
+            -Path "$env:GITHUB_WORKSPACE\paint\build" `
             -Filter "ArmorPaint.exe" `
             -Recurse `
             -File `
-            -ErrorAction SilentlyContinue
+            -ErrorAction SilentlyContinue |
+            Select-Object -First 1
 
-          if (-not $executables) {
-
-            Write-Host ""
-            Write-Host "ArmorPaint.exe was not found."
-
-            Write-Host ""
-            Write-Host "Searching all EXE files..."
-
-            Get-ChildItem `
-              -Path "$root\paint" `
-              -Filter "*.exe" `
-              -Recurse `
-              -File `
-              -ErrorAction SilentlyContinue |
-              Select-Object FullName, Length
-
-            throw "ArmorPaint.exe was not generated."
+          if (-not $exe) {
+            Write-Error "ArmorPaint.exe was not found."
+            exit 1
           }
 
           Write-Host ""
-          Write-Host "Found executable(s):"
-
-          $executables |
-            Select-Object FullName, Length
-
-          $exe = $executables | Select-Object -First 1
+          Write-Host "Found:"
+          Write-Host $exe.FullName
 
           "ARMORPAINT_EXE=$($exe.FullName)" |
             Out-File `
@@ -347,140 +294,245 @@ jobs:
 
 
       # ==========================================================
-      # 9. Find portable runtime
-      # ==========================================================
-
-      - name: Locate portable runtime
-        shell: powershell
-        run: |
-          $ErrorActionPreference = "Stop"
-
-          $root = $env:GITHUB_WORKSPACE
-
-          Write-Host "Searching for krom directory..."
-
-          $kromDirs = Get-ChildItem `
-            -Path "$root\paint" `
-            -Directory `
-            -Recurse `
-            -Filter "krom" `
-            -ErrorAction SilentlyContinue
-
-          if (-not $kromDirs) {
-
-            Write-Host ""
-            Write-Host "No krom directory found."
-
-            Write-Host ""
-            Write-Host "Build tree:"
-            
-            Get-ChildItem `
-              "$root\paint\build" `
-              -Recurse `
-              -File `
-              -ErrorAction SilentlyContinue |
-              Select-Object FullName, Length
-
-            throw "ArmorPaint portable runtime directory was not generated."
-          }
-
-          Write-Host ""
-          Write-Host "Found krom directories:"
-
-          $kromDirs |
-            Select-Object FullName
-
-          $krom = $kromDirs | Select-Object -First 1
-
-          "ARMORPAINT_KROM=$($krom.FullName)" |
-            Out-File `
-              -FilePath $env:GITHUB_ENV `
-              -Append
-
-
-      # ==========================================================
-      # 10. Copy executable into krom if necessary
+      # 9. Verify / prepare portable runtime directory
+      #
+      # IMPORTANT:
+      #
+      # ArmorPaint is a portable application.
+      #
+      # We keep the entire build/krom directory instead of
+      # extracting only ArmorPaint.exe.
       # ==========================================================
 
       - name: Prepare portable package
         shell: powershell
         run: |
-          $ErrorActionPreference = "Stop"
 
-          $krom = $env:ARMORPAINT_KROM
-          $exe = $env:ARMORPAINT_EXE
+          $buildRoot = Join-Path `
+            $env:GITHUB_WORKSPACE `
+            "paint\build"
 
-          $targetExe = Join-Path `
-            $krom `
-            "ArmorPaint.exe"
+          $krom = Join-Path `
+            $buildRoot `
+            "krom"
 
-          Write-Host "Runtime:"
+          if (-not (Test-Path $krom)) {
+            Write-Error "paint/build/krom was not generated."
+            exit 1
+          }
+
+          Write-Host "Found portable runtime directory:"
           Write-Host $krom
 
-          Write-Host ""
-          Write-Host "Executable:"
-          Write-Host $exe
+          # ------------------------------------------------------
+          # Make sure ArmorPaint.exe exists inside krom.
+          #
+          # Some generated projects may place the compiled binary
+          # under build/x64/Release or build/x64/Debug instead.
+          # ------------------------------------------------------
 
-          if (-not (Test-Path $targetExe)) {
+          $kromExe = Join-Path $krom "ArmorPaint.exe"
+
+          if (-not (Test-Path $kromExe)) {
 
             Write-Host ""
-            Write-Host "Copying executable into krom..."
+            Write-Host "ArmorPaint.exe is not inside build/krom."
+            Write-Host "Copying the compiled executable..."
+
+            $compiledExe = Get-ChildItem `
+              -Path $buildRoot `
+              -Filter "ArmorPaint.exe" `
+              -Recurse `
+              -File |
+              Where-Object {
+                $_.FullName -ne $kromExe
+              } |
+              Select-Object -First 1
+
+            if (-not $compiledExe) {
+              Write-Error "Could not locate compiled ArmorPaint.exe."
+              exit 1
+            }
+
+            Write-Host "Compiled executable:"
+            Write-Host $compiledExe.FullName
 
             Copy-Item `
-              $exe `
-              $targetExe `
+              -Path $compiledExe.FullName `
+              -Destination $kromExe `
               -Force
           }
 
-          if (-not (Test-Path $targetExe)) {
-            throw "ArmorPaint.exe could not be placed into krom."
+          # ------------------------------------------------------
+          # Optional CJK font
+          #
+          # Keep this if the source repository provides it.
+          # ------------------------------------------------------
+
+          $font = Join-Path `
+            $env:GITHUB_WORKSPACE `
+            "paint\assets\common\extra\font_cjk.ttc"
+
+          $fontOld = Join-Path `
+            $env:GITHUB_WORKSPACE `
+            "paint\Assets\common\extra\font_cjk.ttc"
+
+          $dataDir = Join-Path $krom "data"
+
+          if (-not (Test-Path $dataDir)) {
+            New-Item `
+              -ItemType Directory `
+              -Path $dataDir `
+              -Force |
+              Out-Null
           }
 
+          if (Test-Path $font) {
+            Write-Host "Copying CJK font..."
+            Copy-Item `
+              $font `
+              (Join-Path $dataDir "font_cjk.ttc") `
+              -Force
+          }
+          elseif (Test-Path $fontOld) {
+            Write-Host "Copying CJK font..."
+            Copy-Item `
+              $fontOld `
+              (Join-Path $dataDir "font_cjk.ttc") `
+              -Force
+          }
+          else {
+            Write-Host "CJK font not found; skipping."
+          }
+
+          # ------------------------------------------------------
+          # Print package contents
+          # ------------------------------------------------------
+
           Write-Host ""
-          Write-Host "Portable package contents:"
+          Write-Host "========================================"
+          Write-Host "Portable package contents"
+          Write-Host "========================================"
 
           Get-ChildItem `
-            $krom `
+            -Path $krom `
             -Recurse `
             -File |
             Select-Object FullName, Length
 
 
       # ==========================================================
-      # 11. ZIP
+      # 10. Smoke-test important files
+      # ==========================================================
+
+      - name: Validate portable package
+        shell: powershell
+        run: |
+
+          $krom = Join-Path `
+            $env:GITHUB_WORKSPACE `
+            "paint\build\krom"
+
+          $exe = Join-Path `
+            $krom `
+            "ArmorPaint.exe"
+
+          if (-not (Test-Path $exe)) {
+            Write-Error "ArmorPaint.exe is missing from portable package."
+            exit 1
+          }
+
+          $files = Get-ChildItem `
+            -Path $krom `
+            -Recurse `
+            -File
+
+          $count = @($files).Count
+
+          Write-Host "Portable package contains $count files."
+
+          if ($count -lt 2) {
+            Write-Error "Portable package looks suspiciously small."
+            exit 1
+          }
+
+          Write-Host ""
+          Write-Host "ArmorPaint.exe:"
+          Get-Item $exe |
+            Select-Object FullName, Length
+
+
+      # ==========================================================
+      # 11. Rename package directory
+      # ==========================================================
+
+      - name: Create final package directory
+        shell: powershell
+        run: |
+
+          $source = Join-Path `
+            $env:GITHUB_WORKSPACE `
+            "paint\build\krom"
+
+          $destination = Join-Path `
+            $env:GITHUB_WORKSPACE `
+            "ArmorPaint-Windows-x64"
+
+          if (Test-Path $destination) {
+            Remove-Item `
+              $destination `
+              -Recurse `
+              -Force
+          }
+
+          Copy-Item `
+            -Path $source `
+            -Destination $destination `
+            -Recurse `
+            -Force
+
+          Write-Host "Final package:"
+          Write-Host $destination
+
+
+      # ==========================================================
+      # 12. Create ZIP
       # ==========================================================
 
       - name: Create ZIP
         shell: powershell
         run: |
-          $ErrorActionPreference = "Stop"
 
-          $zip = Join-Path `
+          $zipName = "ArmorPaint-Windows-x64-${{ inputs.configuration }}.zip"
+
+          $zipPath = Join-Path `
             $env:GITHUB_WORKSPACE `
-            "ArmorPaint-Windows-x64-${{ inputs.configuration }}.zip"
+            $zipName
 
-          if (Test-Path $zip) {
-            Remove-Item $zip -Force
+          if (Test-Path $zipPath) {
+            Remove-Item `
+              $zipPath `
+              -Force
           }
 
           Compress-Archive `
-            -Path "$env:ARMORPAINT_KROM\*" `
-            -DestinationPath $zip `
+            -Path "$env:GITHUB_WORKSPACE\ArmorPaint-Windows-x64\*" `
+            -DestinationPath $zipPath `
             -CompressionLevel Optimal
 
           Write-Host ""
-          Write-Host "Created:"
-          Write-Host $zip
+          Write-Host "Created ZIP:"
+          Write-Host $zipPath
 
-          Get-Item $zip |
+          Get-Item $zipPath |
             Select-Object FullName, Length
 
 
       # ==========================================================
-      # 12. Upload artifact
+      # 13. Upload portable ZIP to GitHub Actions
       # ==========================================================
 
-      - name: Upload ArmorPaint
+      - name: Upload ArmorPaint ZIP
         uses: actions/upload-artifact@v4
         with:
           name: ArmorPaint-Windows-x64-${{ inputs.configuration }}
