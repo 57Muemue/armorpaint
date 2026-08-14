@@ -418,79 +418,109 @@ jobs:
 
 
       # ==========================================================
-      # 12. Prepare portable package
+      # 12. Find ArmorPaint build output
       # ==========================================================
 
-      - name: Prepare portable package
+      - name: Find ArmorPaint build output
         shell: powershell
         run: |
           $ErrorActionPreference = "Stop"
 
-          $buildRoot = Join-Path `
-            $env:GITHUB_WORKSPACE `
-            "paint\build"
+          $buildRoot = Join-Path $env:GITHUB_WORKSPACE "paint\build"
 
-          $krom = Join-Path `
-            $buildRoot `
-            "krom"
+          Write-Host "========================================"
+          Write-Host "Searching ArmorPaint build output"
+          Write-Host "========================================"
+          Write-Host ""
+          Write-Host "Build directory:"
+          Write-Host $buildRoot
 
-          if (-not (Test-Path $krom)) {
+          if (-not (Test-Path $buildRoot)) {
+            throw "Build directory does not exist: $buildRoot"
+          }
+
+          Write-Host ""
+          Write-Host "Searching for ArmorPaint.exe..."
+
+          $exe = Get-ChildItem `
+            -Path $buildRoot `
+            -Filter "ArmorPaint.exe" `
+            -Recurse `
+            -File `
+            -ErrorAction SilentlyContinue |
+            Select-Object -First 1
+
+          if (-not $exe) {
+
             Write-Host ""
-            Write-Host "paint/build/krom was not found."
-
+            Write-Host "ArmorPaint.exe was not found."
             Write-Host ""
-            Write-Host "Build directory:"
+            Write-Host "Build directory tree:"
+            
             Get-ChildItem `
               -Path $buildRoot `
               -Recurse `
-              -Force `
+              -File `
               -ErrorAction SilentlyContinue |
               Select-Object FullName, Length
 
-            throw "Portable krom directory was not generated."
+            throw "ArmorPaint.exe was not generated."
           }
 
-          Write-Host "Portable runtime directory:"
-          Write-Host $krom
+          Write-Host ""
+          Write-Host "========================================"
+          Write-Host "Found ArmorPaint.exe"
+          Write-Host "========================================"
+          Write-Host $exe.FullName
+          Write-Host ""
 
-          # ------------------------------------------------------
-          # Put ArmorPaint.exe into krom
-          # ------------------------------------------------------
+          Write-Host "Searching for executable directory contents..."
 
-          $kromExe = Join-Path `
-            $krom `
-            "ArmorPaint.exe"
+          $exeDir = $exe.Directory.FullName
 
-          if (-not (Test-Path $kromExe)) {
+          Get-ChildItem `
+            -Path $exeDir `
+            -Recurse `
+            -File `
+            -ErrorAction SilentlyContinue |
+            Select-Object FullName, Length
 
-            Write-Host ""
-            Write-Host "ArmorPaint.exe is not inside krom."
-            Write-Host "Copying compiled executable..."
+          "ARMORPAINT_EXE=$($exe.FullName)" |
+            Out-File `
+              -FilePath $env:GITHUB_ENV `
+              -Append
 
-            $compiledExe = Get-ChildItem `
-              -Path $buildRoot `
-              -Filter "ArmorPaint.exe" `
-              -Recurse `
-              -File |
-              Where-Object {
-                $_.FullName -ne $kromExe
-              } |
-              Select-Object -First 1
+          "ARMORPAINT_EXE_DIR=$exeDir" |
+            Out-File `
+              -FilePath $env:GITHUB_ENV `
+              -Append
 
-            if (-not $compiledExe) {
-              throw "Could not locate compiled ArmorPaint.exe."
-            }
+      # ==========================================================
+      # Show build output
+      # ==========================================================
 
-            Write-Host ""
-            Write-Host "Compiled executable:"
-            Write-Host $compiledExe.FullName
+      - name: Show build output
+        shell: powershell
+        run: |
+          Write-Host "========================================"
+          Write-Host "ArmorPaint build output"
+          Write-Host "========================================"
 
-            Copy-Item `
-              -Path $compiledExe.FullName `
-              -Destination $kromExe `
-              -Force
-          }
+          Write-Host ""
+          Write-Host "Executable:"
+          Write-Host $env:ARMORPAINT_EXE
 
+          Write-Host ""
+          Write-Host "Directory:"
+          Write-Host $env:ARMORPAINT_EXE_DIR
+
+          Write-Host ""
+          Write-Host "Files:"
+          Get-ChildItem `
+            -Path $env:ARMORPAINT_EXE_DIR `
+            -Recurse `
+            -File |
+            Select-Object FullName, Length
 
       # ==========================================================
       # 13. CJK font
@@ -545,131 +575,3 @@ jobs:
           else {
             Write-Host "CJK font not found; skipping."
           }
-
-
-      # ==========================================================
-      # 14. Validate portable package
-      # ==========================================================
-
-      - name: Validate portable package
-        shell: powershell
-        run: |
-          $ErrorActionPreference = "Stop"
-
-          $krom = Join-Path `
-            $env:GITHUB_WORKSPACE `
-            "paint\build\krom"
-
-          $exe = Join-Path `
-            $krom `
-            "ArmorPaint.exe"
-
-          if (-not (Test-Path $exe)) {
-            throw "ArmorPaint.exe is missing from portable package."
-          }
-
-          $files = @(
-            Get-ChildItem `
-              -Path $krom `
-              -Recurse `
-              -File
-          )
-
-          Write-Host ""
-          Write-Host "Portable package contains $($files.Count) files."
-
-          if ($files.Count -lt 2) {
-            throw "Portable package looks suspiciously small."
-          }
-
-          Write-Host ""
-          Write-Host "ArmorPaint.exe:"
-          Get-Item $exe |
-            Select-Object FullName, Length
-
-          Write-Host ""
-          Write-Host "Portable package contents:"
-          $files |
-            Select-Object FullName, Length
-
-
-      # ==========================================================
-      # 15. Create final package directory
-      # ==========================================================
-
-      - name: Create final package directory
-        shell: powershell
-        run: |
-          $ErrorActionPreference = "Stop"
-
-          $source = Join-Path `
-            $env:GITHUB_WORKSPACE `
-            "paint\build\krom"
-
-          $destination = Join-Path `
-            $env:GITHUB_WORKSPACE `
-            "ArmorPaint-Windows-x64"
-
-          if (Test-Path $destination) {
-            Remove-Item `
-              -Path $destination `
-              -Recurse `
-              -Force
-          }
-
-          Copy-Item `
-            -Path $source `
-            -Destination $destination `
-            -Recurse `
-            -Force
-
-          Write-Host "Final package:"
-          Write-Host $destination
-
-
-      # ==========================================================
-      # 16. Create ZIP
-      # ==========================================================
-
-      - name: Create ZIP
-        shell: powershell
-        run: |
-          $ErrorActionPreference = "Stop"
-
-          $zipName = "ArmorPaint-Windows-x64-${{ inputs.configuration }}.zip"
-
-          $zipPath = Join-Path `
-            $env:GITHUB_WORKSPACE `
-            $zipName
-
-          if (Test-Path $zipPath) {
-            Remove-Item `
-              -Path $zipPath `
-              -Force
-          }
-
-          Compress-Archive `
-            -Path "$env:GITHUB_WORKSPACE\ArmorPaint-Windows-x64\*" `
-            -DestinationPath $zipPath `
-            -CompressionLevel Optimal
-
-          Write-Host ""
-          Write-Host "Created ZIP:"
-          Write-Host $zipPath
-
-          Get-Item $zipPath |
-            Select-Object FullName, Length
-
-
-      # ==========================================================
-      # 17. Upload artifact
-      # ==========================================================
-
-      - name: Upload ArmorPaint ZIP
-        uses: actions/upload-artifact@v4
-        with:
-          name: ArmorPaint-Windows-x64-${{ inputs.configuration }}
-          path: ArmorPaint-Windows-x64-${{ inputs.configuration }}.zip
-          if-no-files-found: error
-          compression-level: 0
-          retention-days: 30
